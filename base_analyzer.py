@@ -24,13 +24,15 @@ from PIL import Image
 import google.generativeai as genai
 from dotenv import load_dotenv
 import concurrent.futures
+import multiprocessing
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
+START_INDEX = 0
 ROWS_TO_PROCESS    = 1
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
-DISTANCE_M         = 9000                 # camera distance (…d)
+DISTANCE_M         = 25000                # camera distance (…d)
 TILT_DEG           = 0                    # 0 = nadir (straight down)
 HEADING_DEG        = 0                    # 0 = face north
 ROLL_DEG           = 0                    # leave 0
@@ -50,10 +52,12 @@ STABILITY_ROUNDS = 2          # how many rounds of similarity we require
 # Load Gemini api key
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
+print(f"🔐 Using Gemini API key: {api_key[:6]}...")  
+print(f"🔐 Using Gemini API key: ...{api_key[-6:]}")  
 
 genai.configure(api_key=api_key)
 
-model = genai.GenerativeModel("gemini-2.0-flash-exp-image-generation")
+model = genai.GenerativeModel("gemini-2.0-flash-lite")
 
 # prompt = "Describe what you see in this image."
 
@@ -77,8 +81,9 @@ class Base:
                 f"{HEADING_DEG:.0f}h,0t,{ROLL_DEG:.0f}r")
 
 
-def read_first_bases(csv_path: str, n_rows: int) -> list[Base]:
-    df = pd.read_csv(csv_path, nrows=n_rows)
+def read_first_bases(csv_path: str, n_rows: int, start_index: int = 0) -> list[Base]:
+    df = pd.read_csv(csv_path, skiprows=range(1, start_index + 1), nrows=n_rows)
+    df.columns = ["id", "country", "latitude", "longitude", "google_maps_link"]
     bases = [
         Base(
             id=row["id"],
@@ -90,28 +95,48 @@ def read_first_bases(csv_path: str, n_rows: int) -> list[Base]:
     ]
     return bases
 
+def _gemini_worker(img_path, country, queue):
+    try:
+        prompt = (
+            f"You are an expert in understanding satellite imagery and you work for the US army. "
+            f"We got intel that this area is a base/facility of the military of {country}. "
+            f"Analyze this image, try to find military devices, structures, etc. and tell me your findings."
+        )
+        img = Image.open(img_path)
+        response = model.generate_content([prompt, img])
+        queue.put(response.text)
+    except Exception as e:
+        queue.put(f"[ERROR] Gemini API failed: {e}")
 
 def analyze_with_gemini(img_path: str, country: str, timeout_seconds: int = 30):
-    prompt = (
-        f"You are an expert in understanding satellite imagery and you work for the US army. "
-        f"We got intel that this area is a base/facility of the military of {country}. "
-        f"Analyze this image, try to find military devices, structures, etc. and tell me your findings."
-    )
 
-    def call_model():
-        try:
-            img = Image.open(img_path)
-            response = model.generate_content([prompt, img])
-            return response.text
-        except Exception as e:
-            return f"[ERROR] Gemini call failed: {e}"
+    queue = multiprocessing.Queue()
+    proc = multiprocessing.Process(target=_gemini_worker, args=(img_path, country, queue))
+    proc.start()
+    proc.join(timeout_seconds)
+
+    if proc.is_alive():
+        proc.terminate()
+        proc.join()
+        return "[TIMEOUT] Gemini API call took too long and was forcefully stopped."
+
+    return queue.get() if not queue.empty() else "[ERROR] No response from Gemini."
+
+
+    # def call_model():
+    #     try:
+    #         img = Image.open(img_path)
+    #         response = model.generate_content([prompt, img])
+    #         return response.text
+    #     except Exception as e:
+    #         return f"[ERROR] Gemini call failed: {e}"
     
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(call_model)
-        try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError:
-            return "[TIMEOUT] Gemini API call took too long and was aborted."
+    # with concurrent.futures.ThreadPoolExecutor() as executor:
+    #     future = executor.submit(call_model)
+    #     try:
+    #         return future.result(timeout=timeout_seconds)
+    #     except concurrent.futures.TimeoutError:
+    #         return "[TIMEOUT] Gemini API call took too long and was aborted."
 
 def new_driver() -> webdriver.Chrome:
     """Launch Chrome with GUI (not headless)."""
@@ -195,7 +220,7 @@ def wait_for_tiles(driver: webdriver.Chrome):
 
 
 def grab_screens():
-    bases = read_first_bases(CSV_PATH, ROWS_TO_PROCESS)
+    bases = read_first_bases(CSV_PATH, ROWS_TO_PROCESS, START_INDEX)
     driver = new_driver()
 
     for i, base in enumerate(bases, 1):
