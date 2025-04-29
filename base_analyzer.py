@@ -29,10 +29,10 @@ import multiprocessing
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
 START_INDEX = 0
-ROWS_TO_PROCESS    = 1
+ROWS_TO_PROCESS    = 5
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
-DISTANCE_M         = 25000                # camera distance (…d)
+DISTANCE_M         = 18000                # camera distance (…d)
 TILT_DEG           = 0                    # 0 = nadir (straight down)
 HEADING_DEG        = 0                    # 0 = face north
 ROLL_DEG           = 0                    # leave 0
@@ -52,19 +52,10 @@ STABILITY_ROUNDS = 2          # how many rounds of similarity we require
 # Load Gemini api key
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
-print(f"🔐 Using Gemini API key: {api_key[:6]}...")  
-print(f"🔐 Using Gemini API key: ...{api_key[-6:]}")  
 
 genai.configure(api_key=api_key)
 
 model = genai.GenerativeModel("gemini-2.0-flash-lite")
-
-# prompt = "Describe what you see in this image."
-
-# img = Image.open("screenshots/147_egypt.jpg")
-# response = model.generate_content([prompt, img])
-# print(response.text)
-# sys.exit(0)
 
 @dataclass
 class Base:
@@ -99,8 +90,22 @@ def _gemini_worker(img_path, country, queue):
     try:
         prompt = (
             f"You are an expert in understanding satellite imagery and you work for the US army. "
-            f"We got intel that this area is a base/facility of the military of {country}. "
-            f"Analyze this image, try to find military devices, structures, etc. and tell me your findings."
+            f"We got intel that this area is a base/facility of the military of {country}. Analyze this image and "
+            f"respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
+            f"1. 'findings': A list of findings that you think are important for the US army to know, including "
+            f"all man-made structures, military equipment, and infrastructure. We are trying to find which "
+            f"systems, weapons, or equipment are present so focus on that.\n"
+            f"2. 'analysis': A detailed analysis of your findings.\n"
+            f"3. 'things_to_continue_analyzing': A list of things that you think are important to continue "
+            f"analyzing in further images.\n"
+            f"4. 'action': One of ['zoom-in', 'zoom-out', 'move-left', 'move-right', 'finish'] based on what "
+            f"would help you analyze the image or area better.\n"
+            f"- Choose 'zoom-in' if you need to zoom in the image\n"
+            f"- Choose 'zoom-out' if you need more context of the surrounding area or if you are zoomed "
+            f"in too much\n"
+            f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
+            f"the current view\n"
+            f"- Choose 'finish' if you have a complete understanding of the location"
         )
         img = Image.open(img_path)
         response = model.generate_content([prompt, img])
@@ -121,22 +126,6 @@ def analyze_with_gemini(img_path: str, country: str, timeout_seconds: int = 30):
         return "[TIMEOUT] Gemini API call took too long and was forcefully stopped."
 
     return queue.get() if not queue.empty() else "[ERROR] No response from Gemini."
-
-
-    # def call_model():
-    #     try:
-    #         img = Image.open(img_path)
-    #         response = model.generate_content([prompt, img])
-    #         return response.text
-    #     except Exception as e:
-    #         return f"[ERROR] Gemini call failed: {e}"
-    
-    # with concurrent.futures.ThreadPoolExecutor() as executor:
-    #     future = executor.submit(call_model)
-    #     try:
-    #         return future.result(timeout=timeout_seconds)
-    #     except concurrent.futures.TimeoutError:
-    #         return "[TIMEOUT] Gemini API call took too long and was aborted."
 
 def new_driver() -> webdriver.Chrome:
     """Launch Chrome with GUI (not headless)."""
@@ -218,6 +207,16 @@ def wait_for_tiles(driver: webdriver.Chrome):
     return prev_img
 
 
+def extract_clean_json(raw_text: str) -> str:
+    """
+    Extracts the portion of a string that starts with the first '{' and ends with the last '}'.
+    Useful for cleaning LLM output like ```json ... ``` wrappers.
+    """
+    start = raw_text.find('{')
+    end = raw_text.rfind('}')
+    if start != -1 and end != -1 and start < end:
+        return raw_text[start:end+1]
+    return raw_text  # fallback: return unchanged if malformed
 
 def grab_screens():
     bases = read_first_bases(CSV_PATH, ROWS_TO_PROCESS, START_INDEX)
@@ -251,11 +250,12 @@ def grab_screens():
             result = analyze_with_gemini(jpeg_path, base.country, timeout_seconds=30)
 
         # 💾 Save response to text file
-        response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response.txt"
+        cleaned_result = extract_clean_json(result)
+        response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response.json"
         with open(response_path, "w", encoding="utf-8") as f:
-            f.write(result)
+            f.write(cleaned_result)
         print(f"    ↳ Gemini response saved → {response_path}")
-        print("\n📄 Gemini analysis:\n" + result)
+        print("\n📄 Gemini analysis:\n" + cleaned_result)
 
     driver.quit()
 
