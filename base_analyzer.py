@@ -4,6 +4,7 @@ base_analyzer.py – step 1: grab Google Earth screenshots
 Usage:
     python base_analyzer.py grab-shots
 """
+import json
 import os
 import sys
 import time
@@ -28,14 +29,19 @@ import multiprocessing
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
-START_INDEX = 0
-ROWS_TO_PROCESS    = 5
+START_INDEX        = 60
+ROWS_TO_PROCESS    = 1
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
-DISTANCE_M         = 18000                # camera distance (…d)
+DISTANCE           = 8000                 # camera distance (…d)
 TILT_DEG           = 0                    # 0 = nadir (straight down)
 HEADING_DEG        = 0                    # 0 = face north
 ROLL_DEG           = 0                    # leave 0
+
+ZOOM_IN_FACTOR     = 0.6
+ZOOM_OUT_FACTOR    = 1.4
+LON_SHIFT          = 0.01                 # in degrees longitude
+
 LOAD_TIMEOUT       = 15                   # seconds to wait for tiles
 
 SCREEN_DIR = pathlib.Path("screenshots")
@@ -64,14 +70,6 @@ class Base:
     lat: float
     lon: float
 
-    def earth_url(self) -> str:
-        """Build Google-Earth Web URL with our camera parameters."""
-        return (f"https://earth.google.com/web/@"
-                f"{self.lat},{self.lon},{ALTITUDE_M:.2f}a,"
-                f"{DISTANCE_M:.2f}d,{TILT_DEG:.2f}y,"
-                f"{HEADING_DEG:.0f}h,0t,{ROLL_DEG:.0f}r")
-
-
 def read_first_bases(csv_path: str, n_rows: int, start_index: int = 0) -> list[Base]:
     df = pd.read_csv(csv_path, skiprows=range(1, start_index + 1), nrows=n_rows)
     df.columns = ["id", "country", "latitude", "longitude", "google_maps_link"]
@@ -86,37 +84,59 @@ def read_first_bases(csv_path: str, n_rows: int, start_index: int = 0) -> list[B
     ]
     return bases
 
-def _gemini_worker(img_path, country, queue):
+def _gemini_worker(img_path, country, queue, allow_zoom_in):
     try:
-        prompt = (
-            f"You are an expert in understanding satellite imagery and you work for the US army. "
-            f"We got intel that this area is a base/facility of the military of {country}. Analyze this image and "
-            f"respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
-            f"1. 'findings': A list of findings that you think are important for the US army to know, including "
-            f"all man-made structures, military equipment, and infrastructure. We are trying to find which "
-            f"systems, weapons, or equipment are present so focus on that.\n"
-            f"2. 'analysis': A detailed analysis of your findings.\n"
-            f"3. 'things_to_continue_analyzing': A list of things that you think are important to continue "
-            f"analyzing in further images.\n"
-            f"4. 'action': One of ['zoom-in', 'zoom-out', 'move-left', 'move-right', 'finish'] based on what "
-            f"would help you analyze the image or area better.\n"
-            f"- Choose 'zoom-in' if you need to zoom in the image\n"
-            f"- Choose 'zoom-out' if you need more context of the surrounding area or if you are zoomed "
-            f"in too much\n"
-            f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
-            f"the current view\n"
-            f"- Choose 'finish' if you have a complete understanding of the location"
-        )
+        if allow_zoom_in:
+            prompt = (
+                f"You are an expert in understanding satellite imagery and you work for the US army. "
+                f"We got intel that this area is a base/facility of the military of {country}. Analyze this image and "
+                f"respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
+                f"1. 'findings': A list of findings that you think are important for the US army to know, including "
+                f"all man-made structures, military equipment, and infrastructure. We are trying to find which "
+                f"systems, weapons, or equipment are present so focus on that.\n"
+                f"2. 'analysis': A detailed analysis of your findings.\n"
+                f"3. 'things_to_continue_analyzing': A list of things that you think are important to continue "
+                f"analyzing in further images.\n"
+                f"4. 'action': One of ['zoom-in', 'zoom-out', 'move-left', 'move-right', 'finish'] based on what "
+                f"would help you analyze the image or area better.\n"
+                f"- Choose 'zoom-in' if you need to zoom in the image\n"
+                f"- Choose 'zoom-out' if you need more context of the surrounding area or if you are zoomed "
+                f"in too much\n"
+                f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
+                f"the current view, such as related buildings, storage facilities, etc..\n"
+                f"- Choose 'finish' if you have a complete understanding of the location\n"
+                f"DO NOT include coordinates in your response"
+            )
+        else:
+            prompt = (
+                f"You are an expert in understanding satellite imagery and you work for the US army. "
+                f"We got intel that this area is a base/facility of the military of {country}. Analyze this image and "
+                f"respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
+                f"1. 'findings': A list of findings that you think are important for the US army to know, including "
+                f"all man-made structures, military equipment, and infrastructure. We are trying to find which "
+                f"systems, weapons, or equipment are present so focus on that.\n"
+                f"2. 'analysis': A detailed analysis of your findings.\n"
+                f"3. 'things_to_continue_analyzing': A list of things that you think are important to continue "
+                f"analyzing in further images.\n"
+                f"4. 'action': One of ['move-left', 'move-right', 'finish', 'zoom-out'] based on what "
+                f"would help you analyze the image or area better.\n"
+                f"- Choose 'zoom-out' if you need more context of the surrounding area or if you are zoomed "
+                f"in too much\n"
+                f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
+                f"the current view, such as related buildings, storage facilities, etc..\n"
+                f"- Choose 'finish' if you have a complete understanding of the location\n"
+                f"DO NOT include coordinates in your response"
+            )
         img = Image.open(img_path)
         response = model.generate_content([prompt, img])
         queue.put(response.text)
     except Exception as e:
         queue.put(f"[ERROR] Gemini API failed: {e}")
 
-def analyze_with_gemini(img_path: str, country: str, timeout_seconds: int = 30):
+def analyze_with_gemini(img_path: str, country: str, allow_zoom_in: bool, timeout_seconds: int = 30):
 
     queue = multiprocessing.Queue()
-    proc = multiprocessing.Process(target=_gemini_worker, args=(img_path, country, queue))
+    proc = multiprocessing.Process(target=_gemini_worker, args=(img_path, country, queue, allow_zoom_in))
     proc.start()
     proc.join(timeout_seconds)
 
@@ -218,45 +238,102 @@ def extract_clean_json(raw_text: str) -> str:
         return raw_text[start:end+1]
     return raw_text  # fallback: return unchanged if malformed
 
+def build_earth_url(lat, lon, distance_m):
+    return (
+        f"https://earth.google.com/web/@"
+        f"{lat},{lon},{ALTITUDE_M:.2f}a,"
+        f"{distance_m:.2f}d,{TILT_DEG:.2f}y,"
+        f"{HEADING_DEG:.0f}h,0t,{ROLL_DEG:.0f}r"
+    )
+
 def grab_screens():
     bases = read_first_bases(CSV_PATH, ROWS_TO_PROCESS, START_INDEX)
     driver = new_driver()
 
     for i, base in enumerate(bases, 1):
-        url = base.earth_url()
-        print(f"\n[{i}/{len(bases)}] {base.id} – opening {url}")
-        driver.get(url)
-        stable_img = wait_for_tiles(driver)
+        # Initialize values
+        current_distance = DISTANCE
+        current_lat = base.lat
+        current_lon = base.lon
+        zoom_in_count = 0
+        allow_zoom_in = True
 
-        # Resize to width=1024, maintain aspect ratio
-        w_target = 1024
-        w_orig, h_orig = stable_img.size
-        scale = w_target / w_orig
-        new_size = (w_target, int(h_orig * scale))
-        resized_img = stable_img.resize(new_size, Image.LANCZOS)
+        print(f"\nProcessing base {i} of {ROWS_TO_PROCESS} -> Base id: {base.id} located in {base.country}")
 
-        country_clean = base.country.lower().replace(" ", "_")
-        jpeg_path = SCREEN_DIR / f"{base.id}_{country_clean}.jpg"
-        resized_img.save(jpeg_path, format="JPEG", quality=90)
-        print(f"    ↳ saved → {jpeg_path }")
+        for step in range(1, 9):  # up to 8 AI "analysts"
+            print(f"\n📸 [Step {step}/8] Capturing image at distance: {current_distance:.0f}, lon: {current_lon:.5f}")
 
-        # 🧠 Analyze with Gemini
-        print("🧠 Sending image to Gemini for analysis...")
-        result = analyze_with_gemini(jpeg_path , base.country)
+            # 1. Generate Earth URL with current camera params
+            url = build_earth_url(current_lat, current_lon, current_distance)
 
-        # ⏳ Optional retry if it timed out
-        if "TIMEOUT" in result:
-            print("⚠️ Retrying Gemini call once after timeout...")
-            result = analyze_with_gemini(jpeg_path, base.country, timeout_seconds=30)
+            # 2. Open it in Selenium, wait, capture screenshot
+            driver.get(url)
+            stable_img = wait_for_tiles(driver)
 
-        # 💾 Save response to text file
-        cleaned_result = extract_clean_json(result)
-        response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response.json"
-        with open(response_path, "w", encoding="utf-8") as f:
-            f.write(cleaned_result)
-        print(f"    ↳ Gemini response saved → {response_path}")
-        print("\n📄 Gemini analysis:\n" + cleaned_result)
+            # Resize and save image
+            w_target = 1024
+            w_orig, h_orig = stable_img.size
+            scale = w_target / w_orig
+            new_size = (w_target, int(h_orig * scale))
+            resized_img = stable_img.resize(new_size, Image.LANCZOS)
 
+            country_clean = base.country.lower().replace(" ", "_")
+            jpeg_path = SCREEN_DIR / f"{base.id}_{country_clean}_step{step}.jpg"
+            resized_img.save(jpeg_path, format="JPEG", quality=90)
+            print(f"    ↳ saved → {jpeg_path }")
+
+            # Decide if allow zoom in
+            if zoom_in_count > 2:
+                allow_zoom_in = False
+
+                print("\n\nNOT ALLOWING ZOOMING IN ANYMORE\n\n")
+
+            # 🧠 Analyze with Gemini
+            print("🧠 Sending image to Gemini for analysis...")
+            result = analyze_with_gemini(jpeg_path , base.country, allow_zoom_in)
+
+            # ⏳ Optional retry if it timed out
+            if "TIMEOUT" in result:
+                print("⚠️ Retrying Gemini call once after timeout...")
+                result = analyze_with_gemini(jpeg_path, base.country, allow_zoom_in)
+
+            # 💾 Save response to text file
+            cleaned_result = extract_clean_json(result)
+            response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response_step{step}.json"
+            with open(response_path, "w", encoding="utf-8") as f:
+                f.write(cleaned_result)
+            print(f"    ↳ Gemini response saved → {response_path}")
+            print("\n📄 Gemini analysis:\n" + cleaned_result)
+
+            # 5. Parse action and update camera state
+            if cleaned_result.strip().startswith("{"):
+                try:
+                    action = json.loads(cleaned_result)["action"]
+                    print(f"🎯 Gemini suggested action: {action}")
+                except Exception as e:
+                    print(f"❌ Failed to extract 'action'. Ending analysis. ({e})")
+                    break
+            else:
+                print("❌ Gemini response was not JSON. Ending analysis.")
+                print(f"Response content:\n{cleaned_result}")
+                break
+
+            if action == "zoom-in":
+                current_distance *= ZOOM_IN_FACTOR
+                zoom_in_count += 1
+            elif action == "zoom-out":
+                current_distance *= ZOOM_OUT_FACTOR
+            elif action == "move-left":
+                current_lon -= LON_SHIFT
+            elif action == "move-right":
+                current_lon += LON_SHIFT
+            elif action == "finish":
+                print("✅ Gemini marked analysis as complete.")
+                break
+            else:
+                print("⚠️ Unrecognized action. Ending analysis.")
+                break
+            
     driver.quit()
 
 
