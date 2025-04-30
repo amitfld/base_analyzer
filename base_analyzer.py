@@ -29,7 +29,7 @@ import multiprocessing
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
-START_INDEX        = 60
+START_INDEX        = 43
 ROWS_TO_PROCESS    = 1
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
@@ -84,7 +84,7 @@ def read_first_bases(csv_path: str, n_rows: int, start_index: int = 0) -> list[B
     ]
     return bases
 
-def _gemini_worker(img_path, country, queue, allow_zoom_in):
+def _gemini_worker(img_path, country, queue, allow_zoom_in, history_of_analysts):
     try:
         if allow_zoom_in:
             prompt = (
@@ -104,8 +104,9 @@ def _gemini_worker(img_path, country, queue, allow_zoom_in):
                 f"in too much\n"
                 f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
                 f"the current view, such as related buildings, storage facilities, etc..\n"
+                f"Also if you can only see forest or image with nothing interesting in it, consider moving left/right/zooming out\n"
                 f"- Choose 'finish' if you have a complete understanding of the location\n"
-                f"DO NOT include coordinates in your response"
+                f"DO NOT include coordinates in your response\n"
             )
         else:
             prompt = (
@@ -123,20 +124,23 @@ def _gemini_worker(img_path, country, queue, allow_zoom_in):
                 f"- Choose 'zoom-out' if you need more context of the surrounding area or if you are zoomed "
                 f"in too much\n"
                 f"- Choose 'move-left' or 'move-right' if you suspect there are important features just outside "
-                f"the current view, such as related buildings, storage facilities, etc..\n"
+                f"the current view, such as related buildings, storage facilities, etc.. "
+                f"Also if you can only see forest or image with nothing interesting in it, consider moving left/right/zooming out\n"
                 f"- Choose 'finish' if you have a complete understanding of the location\n"
-                f"DO NOT include coordinates in your response"
+                f"DO NOT include coordinates in your response\n"
             )
+        analysis_addition = f"Here is the analysis of previous analysts about this area and their recommendations. You can use this data but don’t use it as fact, think for yourself: {history_of_analysts}"
+        prompt = prompt if not history_of_analysts else prompt + analysis_addition
         img = Image.open(img_path)
         response = model.generate_content([prompt, img])
         queue.put(response.text)
     except Exception as e:
         queue.put(f"[ERROR] Gemini API failed: {e}")
 
-def analyze_with_gemini(img_path: str, country: str, allow_zoom_in: bool, timeout_seconds: int = 30):
+def analyze_with_gemini(img_path: str, country: str, allow_zoom_in: bool, history_of_analysts: dict, timeout_seconds: int = 30):
 
     queue = multiprocessing.Queue()
-    proc = multiprocessing.Process(target=_gemini_worker, args=(img_path, country, queue, allow_zoom_in))
+    proc = multiprocessing.Process(target=_gemini_worker, args=(img_path, country, queue, allow_zoom_in, history_of_analysts))
     proc.start()
     proc.join(timeout_seconds)
 
@@ -257,14 +261,15 @@ def grab_screens():
         current_lon = base.lon
         zoom_in_count = 0
         allow_zoom_in = True
+        history_of_analysts = {}
 
         print(f"\nProcessing base {i} of {ROWS_TO_PROCESS} -> Base id: {base.id} located in {base.country}")
 
         for step in range(1, 9):  # up to 8 AI "analysts"
-            print(f"\n📸 [Step {step}/8] Capturing image at distance: {current_distance:.0f}, lon: {current_lon:.5f}")
 
             # 1. Generate Earth URL with current camera params
             url = build_earth_url(current_lat, current_lon, current_distance)
+            print(f"\n📸 [Step {step}/8] Capturing image at distance: {current_distance:.0f}, lon: {current_lon:.5f}\nURL = {url}")
 
             # 2. Open it in Selenium, wait, capture screenshot
             driver.get(url)
@@ -286,19 +291,18 @@ def grab_screens():
             if zoom_in_count > 2:
                 allow_zoom_in = False
 
-                print("\n\nNOT ALLOWING ZOOMING IN ANYMORE\n\n")
-
             # 🧠 Analyze with Gemini
             print("🧠 Sending image to Gemini for analysis...")
-            result = analyze_with_gemini(jpeg_path , base.country, allow_zoom_in)
+            result = analyze_with_gemini(jpeg_path , base.country, allow_zoom_in, history_of_analysts)
 
             # ⏳ Optional retry if it timed out
             if "TIMEOUT" in result:
                 print("⚠️ Retrying Gemini call once after timeout...")
-                result = analyze_with_gemini(jpeg_path, base.country, allow_zoom_in)
+                result = analyze_with_gemini(jpeg_path, base.country, allow_zoom_in, history_of_analysts)                    
 
             # 💾 Save response to text file
             cleaned_result = extract_clean_json(result)
+            history_of_analysts[f"analysis number {step}"] = cleaned_result
             response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response_step{step}.json"
             with open(response_path, "w", encoding="utf-8") as f:
                 f.write(cleaned_result)
@@ -333,7 +337,7 @@ def grab_screens():
             else:
                 print("⚠️ Unrecognized action. Ending analysis.")
                 break
-            
+
     driver.quit()
 
 
