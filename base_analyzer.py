@@ -26,10 +26,11 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import concurrent.futures
 import multiprocessing
+import requests
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
-START_INDEX        = 43
+START_INDEX        = 0
 ROWS_TO_PROCESS    = 1
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
@@ -55,9 +56,10 @@ STABILITY_THRESHOLD = 1       # % similarity to count as "stable"
 STABILITY_ROUNDS = 2          # how many rounds of similarity we require
 # --------------------------------------------
 
-# Load Gemini api key
+# Load Gemini and OpenRouter api keys from .env file
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
+openrouter_key = os.getenv("OPENROUTER_API_KEY")
 
 genai.configure(api_key=api_key)
 
@@ -162,6 +164,27 @@ def new_driver() -> webdriver.Chrome:
     driver.set_window_size(960, 1080)
     driver.set_window_position(0, 0)  # top-left corner     
     return driver
+
+def ask_commander_model(messages, model="microsoft/mai-ds-r1:free"):
+    headers = {
+        "Authorization": f"Bearer {openrouter_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/amitfld/base_analyzer",  # optional but recommended
+        "X-Title": "military-commander-analysis"
+    }
+
+    data = {
+        "model": model,
+        "messages": messages
+    }
+
+    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        print(f"❌ Error: {response.status_code} - {response.text}")
+        return None
 
 
 def get_screenshot_image(driver):
@@ -306,6 +329,7 @@ def grab_screens():
             response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response_step{step}.json"
             with open(response_path, "w", encoding="utf-8") as f:
                 f.write(cleaned_result)
+            
             print(f"    ↳ Gemini response saved → {response_path}")
             print("\n📄 Gemini analysis:\n" + cleaned_result)
 
@@ -337,6 +361,34 @@ def grab_screens():
             else:
                 print("⚠️ Unrecognized action. Ending analysis.")
                 break
+        
+        # 6. Final report
+        print("\n📝 Generating final report...")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a military commander reviewing satellite analysis reports from 8 analysts. "
+                    "Each analyst examined a different satellite image of the same suspected enemy base. "
+                    "You must synthesize their findings into a final intelligence report for decision-makers."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Here is what the analysts reported:\n\n{history_of_analysts}\n\n"
+                    "Please write a final report that includes:\n"
+                    "- Summary of key findings (with estimated confidence)\n"
+                    "- Strategic analysis and enemy capabilities\n"
+                    "- Conflicting opinions and how you resolved them\n"
+                    "- Final recommendation: [Continue surveillance / Deploy recon drones / Launch strike / Archive / Other]\n"
+                    "- Justify your recommendation"
+                )
+            }
+        ]
+        commander_output = ask_commander_model(messages, model="microsoft/mai-ds-r1:free")
+        print(f"\n📄 Final report:\n-------------------\n{commander_output}\n-------------------")
+        commander_response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_commander_response.json"
 
     driver.quit()
 
