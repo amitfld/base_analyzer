@@ -6,16 +6,13 @@ Usage:
 """
 import json
 import os
-import sys
 import time
 import pathlib
 from dataclasses import dataclass
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 from PIL import Image
@@ -24,14 +21,13 @@ import numpy as np
 from PIL import Image
 import google.generativeai as genai
 from dotenv import load_dotenv
-import concurrent.futures
 import multiprocessing
 import requests
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
-START_INDEX        = 0
-ROWS_TO_PROCESS    = 1
+START_INDEX        = 2 
+ROWS_TO_PROCESS    = 4  # number of rows to process from CSV
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
 DISTANCE           = 8000                 # camera distance (…d)
@@ -48,8 +44,10 @@ LOAD_TIMEOUT       = 15                   # seconds to wait for tiles
 SCREEN_DIR = pathlib.Path("screenshots")
 SCREEN_DIR.mkdir(exist_ok=True)
 
-RESPONSE_DIR = pathlib.Path("responses")
-RESPONSE_DIR.mkdir(exist_ok=True)
+# RESPONSE_DIR = pathlib.Path("responses")
+# RESPONSE_DIR.mkdir(exist_ok=True)
+
+DATA_JSON_PATH = pathlib.Path("data.json")
 
 STABILITY_CHECK_INTERVAL = 2  # seconds between comparisons
 STABILITY_THRESHOLD = 1       # % similarity to count as "stable"
@@ -64,6 +62,7 @@ openrouter_key = os.getenv("OPENROUTER_API_KEY")
 genai.configure(api_key=api_key)
 
 model = genai.GenerativeModel("gemini-2.0-flash-lite")
+OPENROUTER_MODEL = "microsoft/mai-ds-r1:free"
 
 @dataclass
 class Base:
@@ -274,10 +273,34 @@ def build_earth_url(lat, lon, distance_m):
     )
 
 def grab_screens():
-    bases = read_first_bases(CSV_PATH, ROWS_TO_PROCESS, START_INDEX)
+    # 📁 Load existing data.json (if exists), otherwise start fresh
+    if DATA_JSON_PATH.exists():
+        with open(DATA_JSON_PATH, "r", encoding="utf-8") as f:
+            data_json = json.load(f)
+    else:
+        data_json = {}
+
+    # 📁 Load ALL bases starting from START_INDEX
+    all_bases = read_first_bases(CSV_PATH, n_rows=None, start_index=START_INDEX)
+
+    # 🔍 Filter to only new (not yet analyzed)
+    new_bases = [b for b in all_bases if str(b.id) not in data_json]
+
+    # 🚫 If no new bases left
+    if not new_bases:
+        print("✅ All bases are already analyzed. Nothing to do.")
+        return
+
+    # Limit to ROWS_TO_PROCESS
+    bases_to_process = new_bases[:ROWS_TO_PROCESS]
     driver = new_driver()
 
-    for i, base in enumerate(bases, 1):
+    for i, base in enumerate(bases_to_process, 1):
+        # 🔍 Skip if this base was already analyzed (based on base.id as string key)
+        if str(base.id) in data_json:
+            print(f"🚫 Skipping base {base.id} ({base.country}) — already analyzed in data.json.")
+            continue
+
         # Initialize values
         current_distance = DISTANCE
         current_lat = base.lat
@@ -325,13 +348,15 @@ def grab_screens():
 
             # 💾 Save response to text file
             cleaned_result = extract_clean_json(result)
-            history_of_analysts[f"analysis number {step}"] = cleaned_result
-            response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_response_step{step}.json"
-            with open(response_path, "w", encoding="utf-8") as f:
-                f.write(cleaned_result)
-            
-            print(f"    ↳ Gemini response saved → {response_path}")
-            print("\n📄 Gemini analysis:\n" + cleaned_result)
+            # history_of_analysts[f"analysis number {step}"] = cleaned_result
+            try:
+                # Parse JSON string into a Python dict for structured storage
+                parsed_result = json.loads(cleaned_result)
+            except Exception as e:
+                print(f"⚠️ Failed to parse JSON for analyst {step}, saving as raw string. ({e})")
+                parsed_result = cleaned_result  # fallback to raw text if parsing fails
+
+            history_of_analysts[f"analysis number {step}"] = parsed_result
 
             # 5. Parse action and update camera state
             if cleaned_result.strip().startswith("{"):
@@ -370,27 +395,56 @@ def grab_screens():
                 "content": (
                     "You are a military commander reviewing satellite analysis reports from 8 analysts. "
                     "Each analyst examined a different satellite image of the same suspected enemy base. "
-                    "You must synthesize their findings into a final intelligence report for decision-makers."
+                    "You must synthesize their findings into a final intelligence report for decision-makers. "
+                    "👉 IMPORTANT: Respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
+                    "- 'summary': A summary of key findings (with estimated confidence)\n"
+                    "- 'strategic_analysis': Analysis of enemy capabilities and threats\n"
+                    "- 'conflicting_opinions': Conflicting points between analysts and how you resolved them\n"
+                    "- 'final_recommendation': One of ['Continue surveillance', 'Deploy recon drones', 'Launch strike', 'Archive', 'Other']\n"
+                    "- 'justification': Detailed justification for your recommendation\n"
+                    "DO NOT include any text outside the JSON object."
                 )
             },
             {
                 "role": "user",
                 "content": (
                     f"Here is what the analysts reported:\n\n{history_of_analysts}\n\n"
-                    "Please write a final report that includes:\n"
-                    "- Summary of key findings (with estimated confidence)\n"
-                    "- Strategic analysis and enemy capabilities\n"
-                    "- Conflicting opinions and how you resolved them\n"
-                    "- Final recommendation: [Continue surveillance / Deploy recon drones / Launch strike / Archive / Other]\n"
-                    "- Justify your recommendation"
+                    "Write the final report as per the instructions above."
                 )
             }
         ]
-        commander_output = ask_commander_model(messages, model="microsoft/mai-ds-r1:free")
-        print(f"\n📄 Final report:\n-------------------\n{commander_output}\n-------------------")
-        commander_response_path = RESPONSE_DIR / f"{base.id}_{country_clean}_commander_response.json"
 
+        commander_output = ask_commander_model(messages, model=OPENROUTER_MODEL)
+
+        # Clean the JSON if needed
+        cleaned_commander = extract_clean_json(commander_output)
+
+        try:
+            # Parse JSON string into Python dict
+            parsed_commander_report = json.loads(cleaned_commander)
+        except Exception as e:
+            print(f"⚠️ Failed to parse commander report JSON, saving as raw string. ({e})")
+            parsed_commander_report = cleaned_commander  # fallback to raw text if parsing fails
+
+        # 💾 Save everything to data.json
+        data_to_save = {
+            "id": base.id,
+            "country": base.country,
+            "latitude": base.lat,
+            "longitude": base.lon,
+            "analysts": history_of_analysts,
+            "commander_report": parsed_commander_report
+        }
+
+        data_json[str(base.id)] = data_to_save
+
+        # 💾 Save updated data.json immediately
+        with open(DATA_JSON_PATH, "w", encoding="utf-8") as f:
+            json.dump(data_json, f, indent=2, ensure_ascii=False)
+
+        print(f"✅ All data saved to {DATA_JSON_PATH}")
     driver.quit()
+    print("\n🎉 All tasks completed.")
 
 
 # ---------- CLI entry ----------
