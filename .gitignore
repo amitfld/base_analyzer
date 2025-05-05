@@ -2,3 +2,5 @@
 screenshots
 responses
 .env
+*.pdf
+*.json

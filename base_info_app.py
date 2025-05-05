@@ -2,9 +2,9 @@ import streamlit as st
 import json
 import os
 from pathlib import Path
-import pydeck as pdk
 import folium
 from streamlit_folium import st_folium
+from fpdf import FPDF
 
 
 # ---------- Setup ----------
@@ -28,6 +28,41 @@ base_selection = st.sidebar.selectbox(
 )
 
 selected_base = data[base_selection]
+
+# ---------- Quick Stats: Threat Levels ----------
+threat_levels = {"High": 0, "Medium": 0, "Low": 0, "Unknown": 0}
+
+for base in data.values():
+    commander_report = base.get("commander_report", {})
+    strategic_data = commander_report.get("strategic_analysis", {})
+
+    # Determine threats: if strategic_data is a dict, look for keys; if it's a string, treat as direct threat text
+    if isinstance(strategic_data, dict):
+        threats = strategic_data.get("threats") or strategic_data.get("threat_assessment")
+    elif isinstance(strategic_data, str):
+        threats = strategic_data  # treat full string as threat text
+    else:
+        threats = ""
+
+    # Normalize to a string
+    threat_text = ""
+    if isinstance(threats, list):
+        threat_text = " ".join(threats).lower()
+    elif isinstance(threats, str):
+        threat_text = threats.lower()
+
+    if not threat_text.strip():
+        threat_levels["Unknown"] += 1
+    elif any(keyword in threat_text for keyword in ["missile", "strike", "offensive", "sam", "attack", "combat"]):
+        threat_levels["High"] += 1
+    elif any(keyword in threat_text for keyword in ["patrol", "defense", "interdiction", "asymmetric", "monitor"]):
+        threat_levels["Medium"] += 1
+    else:
+        threat_levels["Low"] += 1
+
+st.sidebar.markdown("**🚨 Threat Levels Overview:**")
+for level, count in threat_levels.items():
+    st.sidebar.markdown(f"- {level}: {count}")
 
 # ---------- Basic Info ----------
 st.title(f"🛰️ Base ID: {selected_base['id']} ({selected_base['country']})")
@@ -145,6 +180,69 @@ else:
         st.markdown("_No justification provided._")
 
 
+st.subheader("📦 Export Report")
+
+# ---------- Export buttons ----------
+col1, col2, col3 = st.columns(3)
+
+# 1️⃣ Export as JSON
+with col1:
+    json_data = json.dumps(commander_report, indent=4)
+    st.download_button(
+        label="🗂️ Download JSON",
+        data=json_data,
+        file_name=f"base_{selected_base['id']}_report.json",
+        mime="application/json"
+    )
+
+# 2️⃣ Export as PDF
+with col2:
+    if st.button("📄 Export as PDF"):
+        # Save PDF file locally
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+
+        pdf.cell(200, 10, txt=f"Commander Report - Base {selected_base['id']}", ln=True, align="C")
+        pdf.ln(10)
+
+        def add_section(title, content):
+            pdf.set_font("Arial", style="B", size=12)
+            pdf.multi_cell(0, 10, txt=title)
+            pdf.set_font("Arial", size=12)
+            pdf.multi_cell(0, 10, txt=content)
+            pdf.ln(5)
+
+        # Add all sections
+        add_section("Summary", json.dumps(commander_report.get("summary", ""), indent=2))
+        add_section("Strategic Analysis", json.dumps(commander_report.get("strategic_analysis", ""), indent=2))
+        add_section("Conflicting Opinions", json.dumps(commander_report.get("conflicting_opinions", ""), indent=2))
+        add_section("Final Recommendation", commander_report.get("final_recommendation", ""))
+        add_section("Justification", commander_report.get("justification", ""))
+
+        output_pdf_path = f"base_{selected_base['id']}_report.pdf"
+        pdf.output(output_pdf_path)
+
+        with open(output_pdf_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Download PDF",
+                data=f,
+                file_name=output_pdf_path,
+                mime="application/pdf"
+            )
+
+# 3️⃣ Export Image
+with col3:
+    if screenshot_path.exists():
+        with open(screenshot_path, "rb") as img_file:
+            st.download_button(
+                label="🖼️ Download Final Image",
+                data=img_file,
+                file_name=screenshot_filename,
+                mime="image/jpeg"
+            )
+    else:
+        st.warning("⚠️ No final image available for download.")
 
 
 # ---------- Full History ----------
@@ -208,7 +306,7 @@ for base_id, base in data.items():
 folium.Marker(
     [selected_base['latitude'], selected_base['longitude']],
     popup=f"Base {selected_base['id']} - {selected_base['country']}",
-    tooltip="📍 Selected Base",
+    tooltip=f"📍 Selected Base: Base {selected_base['id']}",
     icon=folium.Icon(color="green", icon="glyphicon glyphicon-screenshot")
 ).add_to(m)
 
