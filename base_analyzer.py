@@ -397,11 +397,11 @@ def grab_screens():
                     "Each analyst examined a different satellite image of the same suspected enemy base. "
                     "You must synthesize their findings into a final intelligence report for decision-makers. "
                     "👉 IMPORTANT: Respond ONLY with a JSON (DO NOT write the word 'json') object containing the following keys:\n"
-                    "- 'summary': A summary of key findings (with estimated confidence)\n"
-                    "- 'strategic_analysis': Analysis of enemy capabilities and threats\n"
-                    "- 'conflicting_opinions': Conflicting points between analysts and how you resolved them\n"
+                    "- 'summary': A summary of key findings (with estimated confidence)(list)\n"
+                    "- 'strategic_analysis': Analysis of enemy capabilities(list) and threats(list)\n"
+                    "- 'conflicting_opinions': Conflicting points between analysts and how you resolved them.\n"
                     "- 'final_recommendation': One of ['Continue surveillance', 'Deploy recon drones', 'Launch strike', 'Archive', 'Other']\n"
-                    "- 'justification': Detailed justification for your recommendation\n"
+                    "- 'justification': Detailed justification for your recommendation(list)\n"
                     "DO NOT include any text outside the JSON object."
                 )
             },
