@@ -2,6 +2,10 @@ import streamlit as st
 import json
 import os
 from pathlib import Path
+import pydeck as pdk
+import folium
+from streamlit_folium import st_folium
+
 
 # ---------- Setup ----------
 DATA_PATH = Path("data.json")
@@ -28,6 +32,13 @@ selected_base = data[base_selection]
 # ---------- Basic Info ----------
 st.title(f"🛰️ Base ID: {selected_base['id']} ({selected_base['country']})")
 st.write(f"**Coordinates:** {selected_base['latitude']}, {selected_base['longitude']}")
+
+# Google Maps link
+lat = selected_base['latitude']
+lon = selected_base['longitude']
+google_maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+st.markdown(f"[🌐 Open in Google Maps]({google_maps_link})")
+
 
 # ---------- Final Screenshot ----------
 country_clean = selected_base['country'].lower().replace(" ", "_")
@@ -175,13 +186,31 @@ with st.expander("🔎 View Full Analysis History"):
         else:
             st.info("No analysis data for this step.")
 
+
 # ---------- Map View ----------
 st.subheader("🗺️ Map View")
 
-lat = selected_base['latitude']
-lon = selected_base['longitude']
+# Create base map centered around selected base
+m = folium.Map(location=[selected_base['latitude'], selected_base['longitude']],
+               zoom_start=5,
+               tiles='OpenStreetMap')  
 
-st.map([{"lat": lat, "lon": lon}])
+# Add all bases as smaller pins
+for base_id, base in data.items():
+    folium.Marker(
+        [base['latitude'], base['longitude']],
+        popup=f"Base {base['id']} - {base['country']}",
+        tooltip=f"Base {base['id']}",
+        icon=folium.Icon(color="green", icon="glyphicon glyphicon-flag")
+    ).add_to(m)
 
-google_maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
-st.markdown(f"[🌐 Open in Google Maps]({google_maps_link})")
+# Add marker for the current base (highlighted)
+folium.Marker(
+    [selected_base['latitude'], selected_base['longitude']],
+    popup=f"Base {selected_base['id']} - {selected_base['country']}",
+    tooltip="📍 Selected Base",
+    icon=folium.Icon(color="green", icon="glyphicon glyphicon-screenshot")
+).add_to(m)
+
+# Render it in Streamlit
+st_data = st_folium(m, width=700, height=500)
