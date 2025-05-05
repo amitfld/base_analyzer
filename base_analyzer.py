@@ -26,8 +26,8 @@ import requests
 
 # ---------- configurable constants ----------
 CSV_PATH           = "military_bases.csv"
-START_INDEX        = 2 
-ROWS_TO_PROCESS    = 4  # number of rows to process from CSV
+START_INDEX        = 0 
+ROWS_TO_PROCESS    = 8  # number of rows to process from CSV
 # – Camera defaults (tweak to taste) –
 ALTITUDE_M         = 8000                 # metres above sea level (…a)
 DISTANCE           = 8000                 # camera distance (…d)
@@ -43,9 +43,6 @@ LOAD_TIMEOUT       = 15                   # seconds to wait for tiles
 
 SCREEN_DIR = pathlib.Path("screenshots")
 SCREEN_DIR.mkdir(exist_ok=True)
-
-# RESPONSE_DIR = pathlib.Path("responses")
-# RESPONSE_DIR.mkdir(exist_ok=True)
 
 DATA_JSON_PATH = pathlib.Path("data.json")
 
@@ -159,9 +156,8 @@ def new_driver() -> webdriver.Chrome:
     # opts.add_argument("--start-maximized")
     service = Service(ChromeDriverManager().install())  
     driver = webdriver.Chrome(service=service, options=opts)  
-    # Set to half screen: 960x1080 (adjust to your needs)
-    driver.set_window_size(960, 1080)
-    driver.set_window_position(0, 0)  # top-left corner     
+    # Set to full screen mode
+    driver.maximize_window()
     return driver
 
 def ask_commander_model(messages, model="microsoft/mai-ds-r1:free"):
@@ -348,7 +344,6 @@ def grab_screens():
 
             # 💾 Save response to text file
             cleaned_result = extract_clean_json(result)
-            # history_of_analysts[f"analysis number {step}"] = cleaned_result
             try:
                 # Parse JSON string into a Python dict for structured storage
                 parsed_result = json.loads(cleaned_result)
