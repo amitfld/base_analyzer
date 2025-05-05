@@ -1,0 +1,27 @@
+{
+    "summary": {
+        "key_findings": [
+            "Confirmed presence of multiple Hardened Aircraft Shelters (HAS) consistent with a military airfield (high confidence).",
+            "Aircraft or components observed within HAS, likely fighter jets (moderate confidence).",
+            "Organized road networks and support buildings indicate active logistics and maintenance (high confidence).",
+            "Unidentified white structures and potential weaponry (e.g., long rectangular objects) require further analysis (low confidence)."
+        ]
+    },
+    "strategic_analysis": {
+        "capabilities": [
+            "Offensive potential: HAS-protected aircraft suggest rapid deployment capabilities. Suspected fighter jets could threaten regional airspace.",
+            "Defensive infrastructure: HAS design implies preparedness for aerial attacks. Possible SAM systems (unconfirmed) would compound air defense risks.",
+            "Operational readiness: Road networks and maintenance facilities indicate sustained operations."
+        ],
+        "threat_assessment": "High-risk facility if confirmed to house combat-ready aircraft or missile systems. Current ambiguity about weaponry limits threat precision."
+    },
+    "conflicting_opinions": {
+        "conflicts": [
+            "HAS purpose: Analysts 1-2 initially debated vehicle vs. aircraft use, but consensus solidified toward aircraft shelters after subsequent reports.",
+            "White structures: Hypotheses range from storage to airfield support; insufficient resolution to resolve.",
+            "Imagery actions: Analysts 1-3 recommended zoom-in, while 4-8 favored zoom-out. Resolution: Prioritize drone deployment to balance contextual and detailed analysis."
+        ]
+    },
+    "final_recommendation": "Deploy recon drones",
+    "justification": "While satellite imagery confirms an active airfield, critical gaps remain: (1) Aircraft types and weapon configurations are unverified, (2) White structures and potential SAM systems require closer inspection, and (3) Recent activity indicators (e.g., tire tracks) need dynamic observation. Drones provide real-time, high-resolution data to confirm offensive capabilities without escalating to kinetic action. Surveillance alone is insufficient given time-sensitive intelligence needs, while a strike remains premature without confirmed hostile intent."
+}
