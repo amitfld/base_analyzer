@@ -252,5 +252,7 @@ Made with ❤️ for the **"Idea to Reality" 2025 course.**
 
 GitHub: [@amitfld](https://github.com/amitfld)
 
+LinkdIn: [Amit Feldman](www.linkedin.com/in/amit-fld)
+
 ---
 
