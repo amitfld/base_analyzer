@@ -175,6 +175,24 @@ streamlit run base_info_app.py
 
 ---
 
+## ⚖️ Legal & Ethical Notice
+
+This project strictly adheres to **legal and ethical guidelines**:
+
+- ✅ All images are sourced from **publicly accessible Google Earth** using its **standard web interface**.
+- ✅ The analysis is performed **only on publicly available satellite imagery** and **does not involve hacking, intrusion, or unauthorized access** of any kind.
+- ✅ No sensitive, confidential, or classified information is used or processed.
+- ✅ The purpose of this project is **academic and educational**—to demonstrate how **AI can assist in OSINT (Open Source Intelligence)** using legal data sources.
+
+➡️ This project **does not engage in or promote** any illegal surveillance or military intelligence operations. It is aligned with **fair use principles** for research and learning.
+
+---
+
+## 🙌 Acknowledgments
+This project is part of the From Idea to Reality Using AI course. Thanks to the instructor for guidance and to the open-source community for the incredible libraries that made this possible.
+
+---
+
 ## 👤 Author
 
 Made with ❤️ for the **"Idea to Reality" 2025 course.**
